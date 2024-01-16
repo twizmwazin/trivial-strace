@@ -5,6 +5,9 @@ use std::ffi::CString;
 use nix::sys::signal::{Signal, raise};
 use serde_json;
 use serde::Serialize;
+use std::io::{Write, stderr};
+use clap::Parser;
+use std::fs::File;
 
 mod ptrace_c;
 mod ptrace;
@@ -48,8 +51,7 @@ impl SyscallResultOutput {
     }
 }
 
-
-fn main() -> Result<()> {
+fn do_trace<W>(output_file: &mut W, command: Vec<CString>) -> Result<()> where W: Write {
     match unsafe { fork()? } {
         ForkResult::Parent { child } => {
             let mut id = 0;
@@ -64,16 +66,16 @@ fn main() -> Result<()> {
                     // Print results
                     let result = ptrace::ptrace_get_syscall_results(child)?;
                     let output = SyscallResultOutput::from_syscall_result(id, &result);
-                    let json = serde_json::to_string(&output).unwrap();
-                    println!("{}", json);
+                    serde_json::to_writer(&mut *output_file, &output).unwrap();
+                    output_file.write_all(b"\n").unwrap();
                     id += 1;
                     in_syscall = false;
                 } else {
                     // Print args
                     let syscall = ptrace::ptrace_get_syscall(child)?;
                     let output = SyscallOutput::from_syscall(id, &syscall);
-                    let json = serde_json::to_string(&output).unwrap();
-                    println!("{}", json);
+                    serde_json::to_writer(&mut *output_file, &output).unwrap();
+                    output_file.write_all(b"\n").unwrap();
                     in_syscall = true;
                 }
 
@@ -82,11 +84,37 @@ fn main() -> Result<()> {
         }
         ForkResult::Child => {
             ptrace::traceme()?;
-            let path = CString::new("/bin/ls").unwrap();
-            let arg = CString::new("ls").unwrap();
-            raise(Signal::SIGSTOP)?; // Add this line to stop the child process
-            execvp(&path, &[arg])?;
+            raise(Signal::SIGSTOP)?;
+            execvp(&command[0], &command.as_slice())?;
         }
     }
+    Ok(())
+}
+
+
+#[derive(Parser, Debug)]
+struct Args {
+    #[arg(short, long)]
+    output: Option<String>,
+
+    #[arg(required = true)]
+    command: Vec<String>,
+}
+
+
+fn main() -> Result<()> {
+    let args = Args::parse();
+    let converted_cmd: Vec<CString> = args.command.iter().map(|s| CString::new(s.as_str()).unwrap()).collect();
+
+    match args.output {
+        Some(path) => {
+            let mut output_file = File::create(path).expect("Failed to open output file");
+            do_trace(&mut output_file, converted_cmd)
+        },
+        None => {
+            do_trace(&mut stderr(), converted_cmd)
+        },
+    }.expect("Failed to trace");
+
     Ok(())
 }
