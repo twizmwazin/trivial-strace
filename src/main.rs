@@ -68,6 +68,7 @@ fn do_trace<W>(output_file: &mut W, command: Vec<CString>) -> Result<()> where W
                     let output = SyscallResultOutput::from_syscall_result(id, &result);
                     serde_json::to_writer(&mut *output_file, &output).unwrap();
                     output_file.write_all(b"\n").unwrap();
+                    output_file.flush().unwrap();
                     id += 1;
                     in_syscall = false;
                 } else {
@@ -76,6 +77,7 @@ fn do_trace<W>(output_file: &mut W, command: Vec<CString>) -> Result<()> where W
                     let output = SyscallOutput::from_syscall(id, &syscall);
                     serde_json::to_writer(&mut *output_file, &output).unwrap();
                     output_file.write_all(b"\n").unwrap();
+                    output_file.flush().unwrap();
                     in_syscall = true;
                 }
 
